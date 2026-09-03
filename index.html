@@ -215,6 +215,22 @@ td.removeCell{width:48px;padding-right:5px}
 .iosInstallSteps{margin-top:18px;display:grid;gap:12px;font-size:16px;line-height:1.4;color:#f2f5f7}
 .shareGlyph{display:inline-block;margin-left:4px;font-size:21px;line-height:1}
 
+
+#appVersion{
+  position:fixed !important;
+  right:10px !important;
+  bottom:8px !important;
+  z-index:2147483647 !important;
+  padding:3px 5px !important;
+  border-radius:4px !important;
+  font:700 11px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif !important;
+  color:#ffffff !important;
+  background:rgba(35,42,50,.92) !important;
+  border:1px solid rgba(255,255,255,.28) !important;
+  pointer-events:none !important;
+  user-select:none !important;
+}
+
 </style>
 </head>
 <body>
@@ -346,6 +362,15 @@ td.removeCell{width:48px;padding-right:5px}
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<div id="iosInstallOverlay" class="overlay" style="display:none">
+  <div class="dialog iosInstallDialog">
+    <div class="dialogTitle">Installer Skemaur</div>
+    <div class="dialogSub">På iPhone og iPad installeres appen fra Del-menuen i Safari.</div>
+    <div class="iosInstallSteps">
+      <div>1. Tryk på <strong>Del</strong> <span class="shareGlyph">□↑</span></div>
+      <div>2. Vælg <strong>Føj til hjemmeskærm</strong></div>
+      <div>3. Tryk <strong>Tilføj</strong></div>
+    </div>
 <script>
 const menuButton=document.getElementById('menuButton');
 const menu=document.getElementById('menu');
@@ -704,7 +729,7 @@ function drawFrame(){
     ctx.fillStyle='#bbb';
     ctx.font=`bold ${Math.max(12,Math.round(Math.min(w,h)*.035))}px system-ui`;
     ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.fillText(entries.length?'Vælg et ark':'Åbn et dokument eller tilføj tider i menuen',cx,cy);
+    ctx.fillText(entries.length?'Vælg en dag':'Åbn et dokument eller tilføj tider i menuen',cx,cy);
     return;
   }
 
@@ -886,7 +911,7 @@ function drawFloating(){
     pipCtx.fillStyle='#bbb';
     pipCtx.font=`bold ${Math.max(12,Math.round(min*.075))}px system-ui`;
     pipCtx.textAlign='center';pipCtx.textBaseline='middle';
-    pipCtx.fillText(entries.length?'Vælg et ark':'Ingen tider',cx,cy);
+    pipCtx.fillText(entries.length?'Vælg en dag':'Ingen tider',cx,cy);
   }
 
   pipRafId=pipWindow.requestAnimationFrame(drawFloating);
@@ -1364,14 +1389,14 @@ installButton.addEventListener('click',async()=>{
     updateInstallButton();
     return;
   }
-  if(isIosSafari()){
+  if(isIosSafari() && iosInstallOverlay){
     iosInstallOverlay.style.display='flex';
     closeMenu();
   }
 });
 
-closeIosInstallButton.addEventListener('click',()=>iosInstallOverlay.style.display='none');
-iosInstallOverlay.addEventListener('pointerdown',e=>{
+if(closeIosInstallButton)closeIosInstallButton.addEventListener('click',()=>{ if(iosInstallOverlay)iosInstallOverlay.style.display='none'; });
+if(iosInstallOverlay)iosInstallOverlay.addEventListener('pointerdown',e=>{
   if(e.target===iosInstallOverlay)iosInstallOverlay.style.display='none';
 });
 
@@ -1411,21 +1436,12 @@ if('serviceWorker' in navigator){
   </div>
 </div>
 
-
-<div id="iosInstallOverlay" class="overlay" style="display:none">
-  <div class="dialog iosInstallDialog">
-    <div class="dialogTitle">Installer Skemaur</div>
-    <div class="dialogSub">På iPhone og iPad installeres appen fra Del-menuen i Safari.</div>
-    <div class="iosInstallSteps">
-      <div>1. Tryk på <strong>Del</strong> <span class="shareGlyph">□↑</span></div>
-      <div>2. Vælg <strong>Føj til hjemmeskærm</strong></div>
-      <div>3. Tryk <strong>Tilføj</strong></div>
-    </div>
-    <div class="dialogActions">
+<div class="dialogActions">
       <button id="closeIosInstallButton" class="action primary" type="button">OK</button>
     </div>
   </div>
 </div>
 
+<div id="appVersion" aria-label="Version 2.5.3">v2.5.3</div>
 </body>
 </html>
