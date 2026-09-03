@@ -542,7 +542,7 @@ async function restoreWorkbook(){
       dirty=Boolean(storedDirty);
       const wb=XLSX.read(new Uint8Array(buffer),{type:'array',cellDates:true});
       populateWorkbook(wb,0,true);
-      infoText.textContent=`Dokument gendannet — ${wb.SheetNames.length} ark`;
+      infoText.textContent=`Dokument gendannet — ${wb.SheetNames.length} dage`;
       return true;
     }
 
@@ -1097,10 +1097,10 @@ function createDefaultWeekWorkbook(){
   currentWorkbook=wb;
   currentWorkbookName='Skemaur.xlsx';
   setWorkbookDirty(true);
-  populateWorkbook(currentWorkbook);
+  populateWorkbook(currentWorkbook,0,true);
   if(sheetSelect && currentWorkbook.SheetNames.length){
-    sheetSelect.value=currentWorkbook.SheetNames[0];
-    loadSheet(currentWorkbook.SheetNames[0],true);
+    sheetSelect.value='0';
+    editorSheetSelect.value='0';
   }
   persistCurrentWorkbook();
 }
@@ -1286,7 +1286,7 @@ fileInput.addEventListener('change',e=>{
       const wb=XLSX.read(new Uint8Array(buffer),{type:'array',cellDates:true});
       populateWorkbook(wb,0,true);
       await persistCurrentWorkbook();
-      infoText.textContent=`${currentFileName} — ${currentWorkbook.SheetNames.length} ark`;
+      infoText.textContent=`${currentFileName} — ${currentWorkbook.SheetNames.length} dage`;
       closeMenu();
     }catch(err){
       console.error(err);
