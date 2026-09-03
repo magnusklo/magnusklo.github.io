@@ -1,4 +1,4 @@
-const CACHE='skemaur-github-v3-starttekst';
+const CACHE='skemaur-github-v4-redigeraktiv';
 const SHELL=['./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/icon-maskable-512.png','./icons/apple-touch-icon.png',
   './ding.mp3'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)));self.skipWaiting()});
