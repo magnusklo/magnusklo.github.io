@@ -218,8 +218,8 @@ td.removeCell{width:48px;padding-right:5px}
 
 <div id="menu" aria-label="Indstillinger">
   <div class="menuSection">
-    <div class="menuLabel">Ark</div>
-    <select id="sheetSelect" class="menuSelect" aria-label="Vælg ark"></select>
+    <div class="menuLabel">Dag</div>
+    <select id="sheetSelect" class="menuSelect" aria-label="Vælg dag"></select>
   </div>
 
   <div class="menuSection">
@@ -228,7 +228,7 @@ td.removeCell{width:48px;padding-right:5px}
     </button>
     <div id="docMenu">
       <div id="docName">Intet dokument</div>
-      <button id="editButton" class="menuButton" type="button" disabled>Rediger</button>
+      <button id="editButton" class="menuButton" type="button" disabled>Rediger/Tilføj</button>
       <button id="saveButton" class="menuButton" type="button" disabled>Gem</button>
       <button id="openButton" class="menuButton" type="button">Åbn</button>
     </div>
@@ -279,10 +279,10 @@ td.removeCell{width:48px;padding-right:5px}
 
     <div class="editorTop">
       <div>
-        <div class="menuLabel">Ark</div>
+        <div class="menuLabel">Dag</div>
         <select id="editorSheetSelect"></select>
       </div>
-      <button id="addSheetButton" class="action" type="button">+ Nyt ark</button>
+      <button id="addSheetButton" class="action" type="button">+ Ny dag</button>
     </div>
 
     <div id="editorTableWrap" class="tableWrap">
@@ -292,7 +292,7 @@ td.removeCell{width:48px;padding-right:5px}
         </thead>
         <tbody id="editorRows"></tbody>
       </table>
-      <div id="editorEmpty" class="emptyState" style="display:none">Dette ark har ingen tider endnu.</div>
+      <div id="editorEmpty" class="emptyState" style="display:none">Denne dag har ingen tider endnu.</div>
     </div>
 
     <div id="newTimeBox">
@@ -314,7 +314,7 @@ td.removeCell{width:48px;padding-right:5px}
 
     <div id="newSheetBox">
       <div class="menuLabel">Navn på nyt ark</div>
-      <input id="newSheetName" type="text" value="Nyt ark">
+      <input id="newSheetName" type="text" value="Ny dag">
       <div class="dialogActions">
         <button id="confirmNewSheetButton" class="action primary" type="button">Opret ark</button>
         <button id="cancelNewSheetButton" class="action" type="button">Annuller</button>
@@ -693,7 +693,7 @@ function drawFrame(){
     ctx.fillStyle='#bbb';
     ctx.font=`bold ${Math.max(12,Math.round(Math.min(w,h)*.035))}px system-ui`;
     ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.fillText(entries.length?'Vælg et ark':'Åbn et dokument',cx,cy);
+    ctx.fillText(entries.length?'Vælg et ark':'Åbn et dokument eller tilføj tider i menuen',cx,cy);
     return;
   }
 
@@ -1067,7 +1067,7 @@ function addNewTime(){
 }
 
 function addNewSheet(){
-  let name=newSheetName.value.trim()||'Nyt ark';
+  let name=newSheetName.value.trim()||'Ny dag';
   const base=name;
   let n=2;
   while(currentWorkbook.SheetNames.includes(name))name=`${base} ${n++}`;
@@ -1079,13 +1079,33 @@ function addNewSheet(){
   populateWorkbook(currentWorkbook,Number(sheetSelect.value)||0,true);
   syncEditorSheetList(newIndex);
   newSheetBox.style.display='none';
-  newSheetName.value='Nyt ark';
+  newSheetName.value='Ny dag';
   dirty=true;
   updateDocumentUI();
   persistCurrentWorkbook().then(renderEditor);
 }
 
+
+function createDefaultWeekWorkbook(){
+  const wb=XLSX.utils.book_new();
+  ['Mandag','Tirsdag','Onsdag','Torsdag','Fredag'].forEach(day=>{
+    const ws=XLSX.utils.aoa_to_sheet([]);
+    XLSX.utils.book_append_sheet(wb,ws,day);
+  });
+  currentWorkbook=wb;
+  currentWorkbookName='Skemaur.xlsx';
+  setWorkbookDirty(true);
+  populateWorkbook(currentWorkbook);
+  if(sheetSelect && currentWorkbook.SheetNames.length){
+    sheetSelect.value=currentWorkbook.SheetNames[0];
+    loadSheet(currentWorkbook.SheetNames[0],true);
+  }
+  persistCurrentWorkbook();
+}
+
 function openEditor(){
+  if(!currentWorkbook){ createDefaultWeekWorkbook(); }
+
   if(!currentWorkbook)return;
   const selected=Number(sheetSelect.value)||0;
   syncEditorSheetList(selected);
