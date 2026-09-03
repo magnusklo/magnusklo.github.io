@@ -210,6 +210,11 @@ td.removeCell{width:48px;padding-right:5px}
   line-height:1.4;color:#9aa4af;
 }
 
+
+.iosInstallDialog{max-width:460px}
+.iosInstallSteps{margin-top:18px;display:grid;gap:12px;font-size:16px;line-height:1.4;color:#f2f5f7}
+.shareGlyph{display:inline-block;margin-left:4px;font-size:21px;line-height:1}
+
 </style>
 </head>
 <body>
@@ -362,6 +367,10 @@ const soundVolumeValue=document.getElementById('soundVolumeValue');
 const soundSummary=document.getElementById('soundSummary');
 const testSoundButton=document.getElementById('testSoundButton');
 const installButton=document.getElementById('installButton');
+
+const iosInstallOverlay=document.getElementById('iosInstallOverlay');
+const closeIosInstallButton=document.getElementById('closeIosInstallButton');
+
 const infoText=document.getElementById('infoText');
 const canvas=document.getElementById('timerCanvas');
 const ctx=canvas.getContext('2d');
@@ -1301,19 +1310,74 @@ fileInput.addEventListener('change',e=>{
 
 if('documentPictureInPicture'in window)floatingButton.style.display='block';
 
+
 let deferredInstallPrompt=null;
+
+function isIosDevice(){
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+}
+function isStandaloneMode(){
+  return window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    window.navigator.standalone===true;
+}
+function isIosSafari(){
+  const ua=navigator.userAgent;
+  return isIosDevice() && /WebKit/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
+}
+function updateInstallButton(){
+  if(isStandaloneMode()){
+    installButton.style.display='none';
+  }else if(deferredInstallPrompt || isIosSafari()){
+    installButton.style.display='block';
+  }else{
+    installButton.style.display='none';
+  }
+}
+
 window.addEventListener('beforeinstallprompt',e=>{
   e.preventDefault();
   deferredInstallPrompt=e;
-  installButton.style.display='block';
+  updateInstallButton();
 });
-installButton.addEventListener('click',async()=>{
-  if(!deferredInstallPrompt)return;
-  deferredInstallPrompt.prompt();
-  await deferredInstallPrompt.userChoice.catch(()=>{});
+
+window.addEventListener('appinstalled',()=>{
   deferredInstallPrompt=null;
-  installButton.style.display='none';
+  updateInstallButton();
 });
+
+installButton.addEventListener('click',async()=>{
+  if(isStandaloneMode()){
+    installButton.style.display='none';
+    return;
+  }
+  if(deferredInstallPrompt){
+    const promptEvent=deferredInstallPrompt;
+    deferredInstallPrompt=null;
+    try{
+      await promptEvent.prompt();
+      await promptEvent.userChoice;
+    }catch(e){
+      console.warn('Installationsdialog kunne ikke åbnes',e);
+    }
+    updateInstallButton();
+    return;
+  }
+  if(isIosSafari()){
+    iosInstallOverlay.style.display='flex';
+    closeMenu();
+  }
+});
+
+closeIosInstallButton.addEventListener('click',()=>iosInstallOverlay.style.display='none');
+iosInstallOverlay.addEventListener('pointerdown',e=>{
+  if(e.target===iosInstallOverlay)iosInstallOverlay.style.display='none';
+});
+
+const standaloneQuery=window.matchMedia('(display-mode: standalone)');
+if(standaloneQuery.addEventListener)standaloneQuery.addEventListener('change',updateInstallButton);
+updateInstallButton();
 
 loadSoundSettings();
 restoreWorkbook().then(()=>{
@@ -1344,6 +1408,22 @@ if('serviceWorker' in navigator){
   <div class="pipMainMessageBox">
     <div class="pipMainMessageTitle">Du kan minimere dette vindue nu</div>
     <div class="pipMainMessageText">Du må ikke lukke det ned, mens “Altid Øverst” er i brug.</div>
+  </div>
+</div>
+
+
+<div id="iosInstallOverlay" class="overlay" style="display:none">
+  <div class="dialog iosInstallDialog">
+    <div class="dialogTitle">Installer Skemaur</div>
+    <div class="dialogSub">På iPhone og iPad installeres appen fra Del-menuen i Safari.</div>
+    <div class="iosInstallSteps">
+      <div>1. Tryk på <strong>Del</strong> <span class="shareGlyph">□↑</span></div>
+      <div>2. Vælg <strong>Føj til hjemmeskærm</strong></div>
+      <div>3. Tryk <strong>Tilføj</strong></div>
+    </div>
+    <div class="dialogActions">
+      <button id="closeIosInstallButton" class="action primary" type="button">OK</button>
+    </div>
   </div>
 </div>
 
