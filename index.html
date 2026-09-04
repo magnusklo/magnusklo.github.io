@@ -586,7 +586,7 @@ async function restoreWorkbook(){
       currentFileName=storedName||'tidsplan.xlsx';
       dirty=Boolean(storedDirty);
       const wb=XLSX.read(new Uint8Array(buffer),{type:'array',cellDates:true});
-      populateWorkbook(wb,0,true);
+      populateWorkbook(wb,0,true,true);
       infoText.textContent=`Dokument gendannet — ${wb.SheetNames.length} dage`;
       return true;
     }
@@ -599,7 +599,7 @@ async function restoreWorkbook(){
       currentFileName='tidsplan.xlsx';
       dirty=false;
       const wb=XLSX.read(bytes,{type:'array',cellDates:true});
-      populateWorkbook(wb,0,true);
+      populateWorkbook(wb,0,true,true);
       await persistCurrentWorkbook();
       localStorage.removeItem('nedtaellingstimer.workbook');
       return true;
@@ -664,11 +664,57 @@ function loadSheet(sheet,autoStart=true){
   }
 }
 
-function populateWorkbook(wb,selectedIndex=0,autoStart=true){
+
+
+let followCalendarMode=true;
+let calendarWatchTimer=null;
+
+function getTodaySheetIndex(wb){
+  if(!wb?.SheetNames?.length)return -1;
+  const weekdayNames=['Søndag','Mandag','Tirsdag','Onsdag','Torsdag','Fredag','Lørdag'];
+  const today=weekdayNames[new Date().getDay()];
+  return wb.SheetNames.findIndex(name =>
+    String(name).trim().toLocaleLowerCase('da-DK') === today.toLocaleLowerCase('da-DK')
+  );
+}
+
+function applyCalendarDay(autoStart=true){
+  if(!followCalendarMode || !currentWorkbook)return;
+  const idx=getTodaySheetIndex(currentWorkbook);
+  if(idx<0)return;
+  if(sheetSelect.value===String(idx) && sheetSelect.dataset.mode==='calendar')return;
+  sheetSelect.dataset.mode='calendar';
+  sheetSelect.value='calendar';
+  editorSheetSelect.value=String(idx);
+  const sheetName=currentWorkbook.SheetNames[idx];
+  if(sheetName) loadSheet(currentWorkbook.Sheets[sheetName],autoStart);
+}
+
+function ensureCalendarWatch(){
+  if(calendarWatchTimer)return;
+  let lastDateKey='';
+  const tick=()=>{
+    const now=new Date();
+    const key=`${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}`;
+    if(key!==lastDateKey){
+      lastDateKey=key;
+      if(followCalendarMode) applyCalendarDay(true);
+    }
+  };
+  tick();
+  calendarWatchTimer=setInterval(tick,30000);
+}
+
+function populateWorkbook(wb,selectedIndex=0,autoStart=true,chooseToday=false){
   normalizeWorkbookTimeFormats(wb);
   currentWorkbook=wb;
   sheetSelect.innerHTML='';
   editorSheetSelect.innerHTML='';
+
+  const calendarOption=document.createElement('option');
+  calendarOption.value='calendar';
+  calendarOption.textContent='Følg kalender';
+  sheetSelect.appendChild(calendarOption);
 
   wb.SheetNames.forEach((name,i)=>{
     const o=document.createElement('option');
@@ -683,11 +729,24 @@ function populateWorkbook(wb,selectedIndex=0,autoStart=true){
   });
 
   if(wb.SheetNames.length){
-    const safeIndex=Math.max(0,Math.min(selectedIndex,wb.SheetNames.length-1));
-    sheetSelect.value=String(safeIndex);
-    editorSheetSelect.value=String(safeIndex);
-    loadSheet(wb.Sheets[wb.SheetNames[safeIndex]],autoStart);
+    const todayIndex=getTodaySheetIndex(wb);
+
+    if(chooseToday && todayIndex>=0){
+      followCalendarMode=true;
+      sheetSelect.dataset.mode='calendar';
+      sheetSelect.value='calendar';
+      editorSheetSelect.value=String(todayIndex);
+      loadSheet(wb.Sheets[wb.SheetNames[todayIndex]],autoStart);
+    }else{
+      followCalendarMode=false;
+      sheetSelect.dataset.mode='manual';
+      const safeIndex=Math.max(0,Math.min(selectedIndex,wb.SheetNames.length-1));
+      sheetSelect.value=String(safeIndex);
+      editorSheetSelect.value=String(safeIndex);
+      loadSheet(wb.Sheets[wb.SheetNames[safeIndex]],autoStart);
+    }
   }
+  ensureCalendarWatch();
   updateDocumentUI();
 }
 
@@ -1123,7 +1182,9 @@ async function workbookChanged(){
   updateDocumentUI();
   await persistCurrentWorkbook();
 
-  const mainIndex=Number(sheetSelect.value)||0;
+  const mainIndex=sheetSelect.value==='calendar'
+    ? Math.max(0,getTodaySheetIndex(currentWorkbook))
+    : (Number(sheetSelect.value)||0);
   const editorIndex=Number(editorSheetSelect.value)||0;
   if(mainIndex===editorIndex){
     const sheetName=currentWorkbook.SheetNames[mainIndex];
@@ -1190,7 +1251,7 @@ function createDefaultWeekWorkbook(){
   currentWorkbook=wb;
   currentFileName='Skemaur.xlsx';
   dirty=true;
-  populateWorkbook(wb,0,false);
+  populateWorkbook(wb,0,false,true);
   sheetSelect.value='0';
   editorSheetSelect.value='0';
   updateDocumentUI();
@@ -1204,7 +1265,9 @@ function openEditor(){
   }
   if(!currentWorkbook)return;
 
-  const selected=Math.max(0,Number(sheetSelect.value)||0);
+  const selected=sheetSelect.value==='calendar'
+      ? Math.max(0,getTodaySheetIndex(currentWorkbook))
+      : Math.max(0,Number(sheetSelect.value)||0);
   syncEditorSheetList(selected);
   editorSheetSelect.value=String(selected);
   renderEditor();
@@ -1218,7 +1281,10 @@ function closeEditor(){
   newSheetBox.style.display='none';
   const selected=Number(editorSheetSelect.value)||0;
   if(currentWorkbook?.SheetNames[selected]){
-    sheetSelect.value=String(selected);
+    if(!followCalendarMode){
+      sheetSelect.value=String(selected);
+      sheetSelect.dataset.mode='manual';
+    }
     loadSheet(currentWorkbook.Sheets[currentWorkbook.SheetNames[selected]],true);
   }
 }
@@ -1299,9 +1365,22 @@ function toggleSoundPanel(){
 
 sheetSelect.addEventListener('change',()=>{
   if(!currentWorkbook)return;
+
+  if(sheetSelect.value==='calendar'){
+    followCalendarMode=true;
+    sheetSelect.dataset.mode='calendar';
+    applyCalendarDay(true);
+    lastSoundTargetKey=null;
+    closeMenu();
+    return;
+  }
+
+  followCalendarMode=false;
+  sheetSelect.dataset.mode='manual';
   const idx=Math.max(0,Number(sheetSelect.value)||0);
   const sheetName=currentWorkbook.SheetNames[idx];
   if(!sheetName)return;
+  editorSheetSelect.value=String(idx);
   loadSheet(currentWorkbook.Sheets[sheetName],true);
   lastSoundTargetKey=null;
   closeMenu();
@@ -1382,7 +1461,7 @@ fileInput.addEventListener('change',e=>{
       currentFileName=f.name||'tidsplan.xlsx';
       dirty=false;
       const wb=XLSX.read(new Uint8Array(buffer),{type:'array',cellDates:true});
-      populateWorkbook(wb,0,true);
+      populateWorkbook(wb,0,true,true);
       await persistCurrentWorkbook();
       infoText.textContent=`${currentFileName} — ${currentWorkbook.SheetNames.length} dage`;
       closeMenu();
@@ -1510,6 +1589,6 @@ if('serviceWorker' in navigator){
   </div>
 </div>
 
-<div id="appVersion" aria-label="Version 2.5.8">v2.5.8</div>
+<div id="appVersion" aria-label="Version 2.5.10">v2.5.10</div>
 </body>
 </html>
