@@ -26,7 +26,7 @@
 html,body{height:100%;width:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;overflow:hidden}
 button,input,select{font:inherit}
 button{cursor:pointer}
-#menuButton{position:absolute;left:max(12px,env(safe-area-inset-left));top:max(12px,env(safe-area-inset-top));z-index:50;background:none;border:0;color:#fff;font-size:30px;line-height:1;padding:3px 6px}
+#menuButton{position:absolute;left:max(12px, env(safe-area-inset-left));top:max(14px, env(safe-area-inset-top));z-index:50;background:none;border:0;color:#fff;font-size:30px;line-height:1;padding:3px 6px}
 #menu{position:absolute;left:max(12px,env(safe-area-inset-left));top:54px;z-index:50;background:var(--panel);padding:12px;border:1px solid var(--border);border-radius:12px;display:none;width:min(290px,calc(100vw - 24px));max-height:calc(100vh - 70px);overflow:auto}
 .menuSection{padding:0 0 10px}
 .menuSection+.menuSection{padding-top:10px;border-top:1px solid var(--border)}
@@ -44,7 +44,7 @@ button{cursor:pointer}
 #soundEnabledRow input{width:auto;margin:0}
 #soundVolume{width:100%;margin:5px 0}
 #soundVolumeValue{font-variant-numeric:tabular-nums}
-#infoText{position:absolute;right:max(14px,env(safe-area-inset-right));top:max(12px,env(safe-area-inset-top));font-size:18px;z-index:30;text-align:right;max-width:60vw}
+#infoText{display:none}
 canvas{display:block;width:100vw;height:100vh;touch-action:none}
 
 .overlay{position:absolute;inset:0;z-index:80;background:rgba(0,0,0,.68);display:none;align-items:center;justify-content:center;padding:18px}
@@ -703,6 +703,27 @@ function computeNextTarget(){
   return best;
 }
 
+
+function getTimerLabels(){
+  if(!entries.length || !target){
+    return {active:'',next:''};
+  }
+
+  const nextEntry=entries[currentIndex]||null;
+  const prevIndex=currentIndex>0 ? currentIndex-1 : -1;
+  const activeEntry=prevIndex>=0 ? entries[prevIndex] : null;
+
+  const active=(activeEntry?.label||'').trim();
+  let next='';
+  if(nextEntry){
+    const hh=String(nextEntry.h).padStart(2,'0');
+    const mm=String(nextEntry.m).padStart(2,'0');
+    const label=(nextEntry.label||'').trim();
+    next=label ? `${label} · ${hh}:${mm}` : `${hh}:${mm}`;
+  }
+  return {active,next};
+}
+
 function resizeCanvas(){
   const dpr=devicePixelRatio||1;
   canvas.width=Math.round(innerWidth*dpr);
@@ -758,10 +779,24 @@ function drawFrame(){
   ctx.textAlign='center';ctx.textBaseline='middle';
   ctx.fillText(text,cx,cy);
 
-  const label=entries[currentIndex]?.label||'';
-  const ts=target.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-  const sheetName=currentWorkbook?.SheetNames[Number(sheetSelect.value)]||'';
-  setInfo(`${label||'Næste tid'} ${ts}`,sheetName);
+  const labels=getTimerLabels();
+  const minDim=Math.min(w,h);
+
+  if(labels.active){
+    ctx.fillStyle='rgba(255,255,255,.95)';
+    ctx.font=`700 ${Math.max(13,Math.round(minDim*.035))}px system-ui`;
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText(labels.active,cx,cy-Math.max(58,minDim*.13));
+  }
+
+  if(labels.next){
+    ctx.fillStyle='rgba(255,255,255,.72)';
+    ctx.font=`500 ${Math.max(11,Math.round(minDim*.024))}px system-ui`;
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText(labels.next,cx,cy+Math.max(58,minDim*.13));
+  }
 }
 
 function loop(){
@@ -906,6 +941,20 @@ function drawFloating(){
       pipCtx.font=`bold ${Math.max(18,Math.round(min*.16))}px system-ui`;
       pipCtx.textAlign='center';pipCtx.textBaseline='middle';
       pipCtx.fillText(text,cx,cy);
+
+      const labels=getTimerLabels();
+      if(labels.active){
+        pipCtx.fillStyle='rgba(255,255,255,.95)';
+        pipCtx.font=`700 ${Math.max(10,Math.round(min*.052))}px system-ui`;
+        pipCtx.textAlign='center';pipCtx.textBaseline='middle';
+        pipCtx.fillText(labels.active,cx,cy-Math.max(34,min*.20));
+      }
+      if(labels.next){
+        pipCtx.fillStyle='rgba(255,255,255,.72)';
+        pipCtx.font=`500 ${Math.max(9,Math.round(min*.038))}px system-ui`;
+        pipCtx.textAlign='center';pipCtx.textBaseline='middle';
+        pipCtx.fillText(labels.next,cx,cy+Math.max(34,min*.20));
+      }
     }
   }else{
     pipCtx.fillStyle='#bbb';
@@ -1443,6 +1492,6 @@ if('serviceWorker' in navigator){
   </div>
 </div>
 
-<div id="appVersion" aria-label="Version 2.5.4">v2.5.4</div>
+<div id="appVersion" aria-label="Version 2.5.6">v2.5.6</div>
 </body>
 </html>
