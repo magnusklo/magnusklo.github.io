@@ -231,6 +231,17 @@ td.removeCell{width:48px;padding-right:5px}
   user-select:none !important;
 }
 
+
+@media (orientation: portrait) and (max-width: 900px){
+  #menuButton{
+    top:calc(env(safe-area-inset-top, 0px) + 48px) !important;
+    left:calc(env(safe-area-inset-left, 0px) + 12px) !important;
+  }
+  #menu{
+    top:calc(env(safe-area-inset-top, 0px) + 108px) !important;
+  }
+}
+
 </style>
 </head>
 <body>
@@ -1492,6 +1503,6 @@ if('serviceWorker' in navigator){
   </div>
 </div>
 
-<div id="appVersion" aria-label="Version 2.5.6">v2.5.6</div>
+<div id="appVersion" aria-label="Version 2.5.7">v2.5.7</div>
 </body>
 </html>
