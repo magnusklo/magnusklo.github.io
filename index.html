@@ -233,11 +233,11 @@ td.removeCell{width:48px;padding-right:5px}
 
 
 @media (orientation: portrait) and (max-width: 900px){
-  #menuButton{
+  html.iphoneAppMode #menuButton{
     top:calc(env(safe-area-inset-top, 0px) + 48px) !important;
     left:calc(env(safe-area-inset-left, 0px) + 12px) !important;
   }
-  #menu{
+  html.iphoneAppMode #menu{
     top:calc(env(safe-area-inset-top, 0px) + 108px) !important;
   }
 }
@@ -1397,6 +1397,13 @@ fileInput.addEventListener('change',e=>{
 if('documentPictureInPicture'in window)floatingButton.style.display='block';
 
 
+
+(function markIphoneAppMode(){
+  const isIphone=/iPhone/i.test(navigator.userAgent);
+  const isStandalone=window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true;
+  document.documentElement.classList.toggle('iphoneAppMode', isIphone && isStandalone);
+})();
+
 let deferredInstallPrompt=null;
 
 function isIosDevice(){
@@ -1503,6 +1510,6 @@ if('serviceWorker' in navigator){
   </div>
 </div>
 
-<div id="appVersion" aria-label="Version 2.5.7">v2.5.7</div>
+<div id="appVersion" aria-label="Version 2.5.8">v2.5.8</div>
 </body>
 </html>
