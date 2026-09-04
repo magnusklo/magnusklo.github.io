@@ -1244,6 +1244,7 @@ sheetSelect.addEventListener('change',()=>{
   if(!sheetName)return;
   loadSheet(currentWorkbook.Sheets[sheetName],true);
   lastSoundTargetKey=null;
+  closeMenu();
 });
 
 menuButton.addEventListener('click',toggleMenu);
@@ -1442,6 +1443,6 @@ if('serviceWorker' in navigator){
   </div>
 </div>
 
-<div id="appVersion" aria-label="Version 2.5.3">v2.5.3</div>
+<div id="appVersion" aria-label="Version 2.5.4">v2.5.4</div>
 </body>
 </html>
