@@ -769,11 +769,13 @@ function getTodaySheetIndex(wb){
 
 function applyCalendarDay(autoStart=true){
   if(!followCalendarMode || !currentWorkbook)return;
-  const idx=getTodaySheetIndex(currentWorkbook);
-  if(idx<0)return;
-  if(sheetSelect.value===String(idx) && sheetSelect.dataset.mode==='calendar')return;
+
   sheetSelect.dataset.mode='calendar';
   sheetSelect.value='calendar';
+
+  const idx=getTodaySheetIndex(currentWorkbook);
+  if(idx<0)return;
+
   editorSheetSelect.value=String(idx);
   const sheetName=currentWorkbook.SheetNames[idx];
   if(sheetName) loadSheet(currentWorkbook.Sheets[sheetName],autoStart);
@@ -819,17 +821,19 @@ function populateWorkbook(wb,selectedIndex=0,autoStart=true,chooseToday=false){
 
   if(wb.SheetNames.length){
     const todayIndex=getTodaySheetIndex(wb);
+    const safeIndex=Math.max(0,Math.min(selectedIndex,wb.SheetNames.length-1));
 
-    if(chooseToday && todayIndex>=0){
+    if(chooseToday){
       followCalendarMode=true;
       sheetSelect.dataset.mode='calendar';
       sheetSelect.value='calendar';
-      editorSheetSelect.value=String(todayIndex);
-      loadSheet(wb.Sheets[wb.SheetNames[todayIndex]],autoStart);
+
+      const shownIndex=todayIndex>=0 ? todayIndex : safeIndex;
+      editorSheetSelect.value=String(shownIndex);
+      loadSheet(wb.Sheets[wb.SheetNames[shownIndex]],autoStart);
     }else{
       followCalendarMode=false;
       sheetSelect.dataset.mode='manual';
-      const safeIndex=Math.max(0,Math.min(selectedIndex,wb.SheetNames.length-1));
       sheetSelect.value=String(safeIndex);
       editorSheetSelect.value=String(safeIndex);
       loadSheet(wb.Sheets[wb.SheetNames[safeIndex]],autoStart);
@@ -1341,8 +1345,6 @@ function createDefaultWeekWorkbook(){
   currentFileName='Skemaur.xlsx';
   dirty=true;
   populateWorkbook(wb,0,false,true);
-  sheetSelect.value='0';
-  editorSheetSelect.value='0';
   updateDocumentUI();
   persistCurrentWorkbook();
   return wb;
@@ -1678,6 +1680,6 @@ if('serviceWorker' in navigator){
   </div>
 </div>
 
-<div id="appVersion" aria-label="Version 2.5.17">v2.5.17</div>
+<div id="appVersion" aria-label="Version 2.5.18">v2.5.18</div>
 </body>
 </html>
