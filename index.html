@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0b0f14">
+<meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Skemaur af Magnus Kloppenborg">
@@ -13,7 +13,7 @@
 <title>Skemaur af Magnus Kloppenborg</title>
 <style>
 :root{
-  --bg:#0b0f14;
+  --bg:#000000;
   --panel:rgba(0,0,0,.88);
   --panel2:#151a21;
   --border:rgba(255,255,255,.18);
@@ -927,10 +927,19 @@ function drawFrame(){
 
   const frac=Math.max(0,Math.min(1,diff/currentTotalMs));
   ctx.lineWidth=Math.max(7,Math.round(Math.min(w,h)*.032));
-  ctx.strokeStyle='rgba(91,188,255,.95)';
+  ctx.lineCap='round';
+  const arcGradient=ctx.createLinearGradient(cx-r,cy,cx+r,cy);
+  arcGradient.addColorStop(0,'#8b5cf6');
+  arcGradient.addColorStop(.48,'#5865f2');
+  arcGradient.addColorStop(1,'#38bdf8');
   ctx.beginPath();
   ctx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+frac*Math.PI*2);
+  ctx.strokeStyle=arcGradient;
+  ctx.shadowColor='#7771ff';
+  ctx.shadowBlur=Math.max(10,Math.round(Math.min(w,h)*.035));
   ctx.stroke();
+  ctx.shadowBlur=0;
+  ctx.lineCap='butt';
 
   const sec=Math.max(0,Math.floor(diff/1000));
   const mins=Math.floor(sec/60);
@@ -1094,8 +1103,18 @@ function drawFloating(){
       const frac=Math.max(0,Math.min(1,diff/currentTotalMs));
       const start=-Math.PI/2,end=start+frac*Math.PI*2;
       pipCtx.lineWidth=Math.max(7,Math.round(min*.06));
-      pipCtx.strokeStyle='rgba(91,188,255,.95)';
-      pipCtx.beginPath();pipCtx.arc(cx,cy,radius,start,end,false);pipCtx.stroke();
+      pipCtx.lineCap='round';
+      const pipGradient=pipCtx.createLinearGradient(cx-radius,cy,cx+radius,cy);
+      pipGradient.addColorStop(0,'#8b5cf6');
+      pipGradient.addColorStop(.48,'#5865f2');
+      pipGradient.addColorStop(1,'#38bdf8');
+      pipCtx.beginPath();pipCtx.arc(cx,cy,radius,start,end,false);
+      pipCtx.strokeStyle=pipGradient;
+      pipCtx.shadowColor='#7771ff';
+      pipCtx.shadowBlur=Math.max(8,Math.round(min*.045));
+      pipCtx.stroke();
+      pipCtx.shadowBlur=0;
+      pipCtx.lineCap='butt';
 
       const sec=Math.max(0,Math.floor(diff/1000));
       const mins=Math.floor(sec/60),secs=sec%60;
@@ -1680,6 +1699,6 @@ if('serviceWorker' in navigator){
   </div>
 </div>
 
-<div id="appVersion" aria-label="Version 2.5.18">v2.5.18</div>
+<div id="appVersion" aria-label="Version 2.5.19">v2.5.19</div>
 </body>
 </html>
