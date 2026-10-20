@@ -1,0 +1,1214 @@
+
+
+const menuButton=document.getElementById('menuButton');
+const menu=document.getElementById('menu');
+const sheetSelect=document.getElementById('sheetSelect');
+const documentButton=document.getElementById('documentButton');
+const docMenu=document.getElementById('docMenu');
+const docName=document.getElementById('docName');
+const editButton=document.getElementById('editButton');
+const saveButton=document.getElementById('saveButton');
+const openButton=document.getElementById('openButton');
+const fileInput=document.getElementById('fileInput');
+const floatingButton=document.getElementById('floatingButton');
+const soundButton=document.getElementById('soundButton');
+const soundPanel=document.getElementById('soundPanel');
+const soundEnabled=document.getElementById('soundEnabled');
+const soundLead=document.getElementById('soundLead');
+const soundVolume=document.getElementById('soundVolume');
+const soundVolumeValue=document.getElementById('soundVolumeValue');
+const soundSummary=document.getElementById('soundSummary');
+const testSoundButton=document.getElementById('testSoundButton');
+const installButton=document.getElementById('installButton');
+
+const iosInstallOverlay=document.getElementById('iosInstallOverlay');
+const closeIosInstallButton=document.getElementById('closeIosInstallButton');
+
+const infoText=document.getElementById('infoText');
+const canvas=document.getElementById('timerCanvas');
+const ctx=canvas.getContext('2d');
+
+
+function showPipMainMessage(){
+  const el=document.getElementById('pipMainMessage');
+  if(el)el.classList.add('show');
+}
+function hidePipMainMessage(){
+  const el=document.getElementById('pipMainMessage');
+  if(el)el.classList.remove('show');
+}
+
+function setInfo(primary='',secondary=''){
+  const a=infoText.querySelector('.nextInfo');
+  const b=infoText.querySelector('.sheetInfo');
+  if(a&&b){
+    a.textContent=primary;
+    b.textContent=secondary;
+    b.style.display=secondary?'block':'none';
+  }else{
+    infoText.textContent=[primary,secondary].filter(Boolean).join(' · ');
+  }
+}
+
+
+const editorOverlay=document.getElementById('editorOverlay');
+const closeEditorButton=document.getElementById('closeEditorButton');
+const doneEditorButton=document.getElementById('doneEditorButton');
+const editorSheetSelect=document.getElementById('editorSheetSelect');
+const editorRows=document.getElementById('editorRows');
+const editorEmpty=document.getElementById('editorEmpty');
+const addSheetButton=document.getElementById('addSheetButton');
+const addTimeButton=document.getElementById('addTimeButton');
+const newTimeBox=document.getElementById('newTimeBox');
+const newTimeLabel=document.getElementById('newTimeLabel');
+const newTimeValue=document.getElementById('newTimeValue');
+const confirmNewTimeButton=document.getElementById('confirmNewTimeButton');
+const cancelNewTimeButton=document.getElementById('cancelNewTimeButton');
+const newSheetBox=document.getElementById('newSheetBox');
+const newSheetName=document.getElementById('newSheetName');
+const confirmNewSheetButton=document.getElementById('confirmNewSheetButton');
+const cancelNewSheetButton=document.getElementById('cancelNewSheetButton');
+
+const unsavedOverlay=document.getElementById('unsavedOverlay');
+const unsavedSaveButton=document.getElementById('unsavedSaveButton');
+const unsavedContinueButton=document.getElementById('unsavedContinueButton');
+const unsavedCancelButton=document.getElementById('unsavedCancelButton');
+
+let entries=[];
+let currentIndex=0;
+let target=null;
+let currentTotalMs=0;
+let rafId=null;
+let currentWorkbook=null;
+let currentFileName='tidsplan.xlsx';
+let dirty=false;
+let pendingOpenAfterWarning=false;
+
+let pipWindow=null;
+let pipCanvas=null;
+let pipCtx=null;
+let pipRafId=null;
+
+let audioContext=null;
+let audioBuffer=null;
+let audioLoading=null;
+let lastSoundTargetKey=null;
+
+const SOUND_SETTINGS_KEY='nedtaellingstimer.soundSettings';
+
+function parseTimeCell(cell){
+  if(cell==null)return null;
+  if(cell instanceof Date)return{h:cell.getHours(),m:cell.getMinutes()};
+  if(typeof cell==='number'){
+    if(cell<1){
+      const s=Math.round(cell*86400);
+      return{h:Math.floor(s/3600)%24,m:Math.floor((s%3600)/60)};
+    }
+    const d=new Date(Math.round((cell-25569)*86400*1000));
+    return{h:d.getUTCHours(),m:d.getUTCMinutes()};
+  }
+  let s=String(cell).trim();
+  if(!s)return null;
+  s=s.replace(/\.(?=\d{2}(?:\D|$))/g,':');
+  const compact=s.match(/^\s*(\d{3,4})\s*$/);
+  if(compact)s=compact[1].slice(0,-2)+':'+compact[1].slice(-2);
+  const m=s.match(/^(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?$/i);
+  if(!m)return null;
+  let h=parseInt(m[1],10);
+  let mi=m[2]?parseInt(m[2],10):0;
+  const ap=m[3]?.toLowerCase();
+  if(ap==='pm'&&h<12)h+=12;
+  if(ap==='am'&&h===12)h=0;
+  return h<24&&mi<60?{h,m:mi}:null;
+}
+
+function timeToExcelFraction(h,m){return((h*60)+m)/1440}
+function timeToHHMM(t){return String(t.h).padStart(2,'0')+':'+String(t.m).padStart(2,'0')}
+function normalizeWorkbookTimeFormats(wb){
+  if(!wb)return;
+  wb.SheetNames.forEach(sheetName=>{
+    const sheet=wb.Sheets[sheetName];
+    if(!sheet||!sheet['!ref'])return;
+    const range=XLSX.utils.decode_range(sheet['!ref']);
+    for(let r=range.s.r;r<=range.e.r;r++){
+      const ref='C'+(r+1);
+      const cell=sheet[ref];
+      if(!cell)continue;
+      const t=parseTimeCell(cell.v);
+      if(!t)continue;
+      sheet[ref]={
+        t:'n',
+        v:timeToExcelFraction(t.h,t.m),
+        z:'hh:mm'
+      };
+    }
+  });
+}
+
+
+function openTimerDB(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open('NedtaellingsTimerDB',2);
+    req.onupgradeneeded=()=>{
+      const db=req.result;
+      if(!db.objectStoreNames.contains('files'))db.createObjectStore('files');
+    };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+}
+
+async function dbPut(key,value){
+  const db=await openTimerDB();
+  await new Promise((resolve,reject)=>{
+    const tx=db.transaction('files','readwrite');
+    tx.objectStore('files').put(value,key);
+    tx.oncomplete=resolve;
+    tx.onerror=()=>reject(tx.error);
+  });
+  db.close();
+}
+
+async function dbGet(key){
+  const db=await openTimerDB();
+  const value=await new Promise((resolve,reject)=>{
+    const tx=db.transaction('files','readonly');
+    const req=tx.objectStore('files').get(key);
+    req.onsuccess=()=>resolve(req.result??null);
+    req.onerror=()=>reject(req.error);
+  });
+  db.close();
+  return value;
+}
+
+async function persistCurrentWorkbook(){
+  if(!currentWorkbook)return;
+  try{
+    normalizeWorkbookTimeFormats(currentWorkbook);
+    const bytes=XLSX.write(currentWorkbook,{bookType:'xlsx',type:'array'});
+    await dbPut('lastWorkbook',bytes);
+    await dbPut('lastWorkbookName',currentFileName);
+    await dbPut('lastWorkbookDirty',dirty);
+    if(navigator.storage?.persist)navigator.storage.persist().catch(()=>{});
+  }catch(e){console.warn('Kunne ikke autosave dokumentet',e)}
+}
+
+async function restoreWorkbook(){
+  try{
+    let buffer=await dbGet('lastWorkbook');
+    const storedName=await dbGet('lastWorkbookName');
+    const storedDirty=await dbGet('lastWorkbookDirty');
+
+    if(buffer){
+      currentFileName=storedName||'tidsplan.xlsx';
+      dirty=Boolean(storedDirty);
+      const wb=XLSX.read(new Uint8Array(buffer),{type:'array',cellDates:true});
+      populateWorkbook(wb,0,true,true);
+      infoText.textContent=`Dokument gendannet — ${wb.SheetNames.length} dage`;
+      return true;
+    }
+
+    const encoded=localStorage.getItem('nedtaellingstimer.workbook');
+    if(encoded){
+      const binary=atob(encoded);
+      const bytes=new Uint8Array(binary.length);
+      for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+      currentFileName='tidsplan.xlsx';
+      dirty=false;
+      const wb=XLSX.read(bytes,{type:'array',cellDates:true});
+      populateWorkbook(wb,0,true,true);
+      await persistCurrentWorkbook();
+      localStorage.removeItem('nedtaellingstimer.workbook');
+      return true;
+    }
+    updateDocumentUI();
+    drawFrame();
+    return false;
+  }catch(e){
+    console.warn('Kunne ikke gendanne dokumentet',e);
+    updateDocumentUI();
+    drawFrame();
+    return false;
+  }
+}
+
+function updateDocumentUI(){
+  editButton.disabled=false;
+
+  if(!currentWorkbook){
+    docName.textContent='Intet dokument';
+    editButton.disabled=false;
+    saveButton.disabled=true;
+    sheetSelect.innerHTML='';
+    sheetSelect.disabled=true;
+    return;
+  }
+  docName.innerHTML=(dirty?'<span id="dirtyMark">●</span> ':'')+escapeHtml(currentFileName)+(dirty?' — ikke gemt':'');
+  editButton.disabled=false;
+  saveButton.disabled=!dirty;
+  sheetSelect.disabled=false;
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+function loadSheet(sheet,autoStart=true){
+  const rows=XLSX.utils.sheet_to_json(sheet,{header:1,raw:true});
+  entries=[];
+  for(const row of rows){
+    if(!row)continue;
+    const t=parseTimeCell(row[2]);
+    if(t)entries.push({label:(row[0]||'').toString(),h:t.h,m:t.m});
+  }
+  entries.sort((a,b)=>(a.h-b.h)||(a.m-b.m));
+  currentIndex=0;
+  target=null;
+  lastSoundTargetKey=null;
+
+  if(!entries.length){
+    infoText.textContent='Ingen tider fundet i kolonne C';
+    drawFrame();
+    return;
+  }
+
+  if(autoStart){
+    tryUnlockAudio();
+    startTimer();
+  }else{
+    infoText.textContent=`Klar — ${entries.length} tider`;
+    drawFrame();
+  }
+}
+
+
+
+let followCalendarMode=true;
+let calendarWatchTimer=null;
+
+function getTodaySheetIndex(wb){
+  if(!wb?.SheetNames?.length)return -1;
+  const weekdayNames=['Søndag','Mandag','Tirsdag','Onsdag','Torsdag','Fredag','Lørdag'];
+  const today=weekdayNames[new Date().getDay()];
+  return wb.SheetNames.findIndex(name =>
+    String(name).trim().toLocaleLowerCase('da-DK') === today.toLocaleLowerCase('da-DK')
+  );
+}
+
+function applyCalendarDay(autoStart=true){
+  if(!followCalendarMode || !currentWorkbook)return;
+
+  sheetSelect.dataset.mode='calendar';
+  sheetSelect.value='calendar';
+
+  const idx=getTodaySheetIndex(currentWorkbook);
+  if(idx<0)return;
+
+  editorSheetSelect.value=String(idx);
+  const sheetName=currentWorkbook.SheetNames[idx];
+  if(sheetName) loadSheet(currentWorkbook.Sheets[sheetName],autoStart);
+}
+
+function ensureCalendarWatch(){
+  if(calendarWatchTimer)return;
+  let lastDateKey='';
+  const tick=()=>{
+    const now=new Date();
+    const key=`${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}`;
+    if(key!==lastDateKey){
+      lastDateKey=key;
+      if(followCalendarMode) applyCalendarDay(true);
+    }
+  };
+  tick();
+  calendarWatchTimer=setInterval(tick,30000);
+}
+
+function populateWorkbook(wb,selectedIndex=0,autoStart=true,chooseToday=false){
+  normalizeWorkbookTimeFormats(wb);
+  currentWorkbook=wb;
+  sheetSelect.innerHTML='';
+  editorSheetSelect.innerHTML='';
+
+  const calendarOption=document.createElement('option');
+  calendarOption.value='calendar';
+  calendarOption.textContent='Følg kalender';
+  sheetSelect.appendChild(calendarOption);
+
+  wb.SheetNames.forEach((name,i)=>{
+    const o=document.createElement('option');
+    o.value=String(i);
+    o.textContent=name;
+    sheetSelect.appendChild(o);
+
+    const e=document.createElement('option');
+    e.value=String(i);
+    e.textContent=name;
+    editorSheetSelect.appendChild(e);
+  });
+
+  if(wb.SheetNames.length){
+    const todayIndex=getTodaySheetIndex(wb);
+    const safeIndex=Math.max(0,Math.min(selectedIndex,wb.SheetNames.length-1));
+
+    if(chooseToday){
+      followCalendarMode=true;
+      sheetSelect.dataset.mode='calendar';
+      sheetSelect.value='calendar';
+
+      const shownIndex=todayIndex>=0 ? todayIndex : safeIndex;
+      editorSheetSelect.value=String(shownIndex);
+      loadSheet(wb.Sheets[wb.SheetNames[shownIndex]],autoStart);
+    }else{
+      followCalendarMode=false;
+      sheetSelect.dataset.mode='manual';
+      sheetSelect.value=String(safeIndex);
+      editorSheetSelect.value=String(safeIndex);
+      loadSheet(wb.Sheets[wb.SheetNames[safeIndex]],autoStart);
+    }
+  }
+  ensureCalendarWatch();
+  updateDocumentUI();
+}
+
+function computeNextTarget(){
+  if(!entries.length)return null;
+  const now=new Date();
+  let best=null,bestDiff=Infinity,bestIdx=0;
+  for(let i=0;i<entries.length;i++){
+    const e=entries[i];
+    const c=new Date(now);
+    c.setHours(e.h,e.m,0,0);
+    if(c<=now)c.setDate(c.getDate()+1);
+    const d=c-now;
+    if(d>0&&d<bestDiff){best=c;bestDiff=d;bestIdx=i}
+  }
+  if(!best)return null;
+
+  currentIndex=bestIdx;
+  const prevIdx=(bestIdx-1+entries.length)%entries.length;
+  const prev=new Date(best);
+  prev.setHours(entries[prevIdx].h,entries[prevIdx].m,0,0);
+  if(prev>=best)prev.setDate(prev.getDate()-1);
+  currentTotalMs=Math.max(1000,best-prev);
+  return best;
+}
+
+
+function getTimerLabels(){
+  if(!entries.length || !target){
+    return {active:'',next:''};
+  }
+
+  const nextEntry=entries[currentIndex]||null;
+  const prevIndex=currentIndex>0 ? currentIndex-1 : -1;
+  const activeEntry=prevIndex>=0 ? entries[prevIndex] : null;
+
+  const active=(activeEntry?.label||'').trim();
+  let next='';
+  if(nextEntry){
+    const hh=String(nextEntry.h).padStart(2,'0');
+    const mm=String(nextEntry.m).padStart(2,'0');
+    const label=(nextEntry.label||'').trim();
+    next=label ? `${label} · ${hh}:${mm}` : `${hh}:${mm}`;
+  }
+  return {active,next};
+}
+
+function resizeCanvas(){
+  const dpr=devicePixelRatio||1;
+  canvas.width=Math.round(innerWidth*dpr);
+  canvas.height=Math.round(innerHeight*dpr);
+  canvas.style.width=innerWidth+'px';
+  canvas.style.height=innerHeight+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+addEventListener('resize',resizeCanvas,{passive:true});
+resizeCanvas();
+
+function drawFrame(){
+  const dpr=devicePixelRatio||1;
+  const w=canvas.width/dpr,h=canvas.height/dpr;
+  const cx=w/2,cy=h/2;
+  const r=Math.max(10,Math.min(w,h)/2-Math.max(24,Math.min(w,h)*.05));
+
+  ctx.clearRect(0,0,w,h);
+  ctx.lineWidth=Math.max(5,Math.round(Math.min(w,h)*.018));
+  ctx.strokeStyle='rgba(255,255,255,.13)';
+  ctx.lineCap='round';
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.stroke();
+
+  if(!target){
+    ctx.fillStyle='#bbb';
+    ctx.font=`bold ${Math.max(12,Math.round(Math.min(w,h)*.035))}px system-ui`;
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(entries.length?'Vælg en dag':'Åbn et dokument eller tilføj tider i menuen',cx,cy);
+    return;
+  }
+
+  let diff=target-new Date();
+  if(diff<=0){
+    target=computeNextTarget();
+    if(!target)return;
+    diff=target-new Date();
+  }
+  maybePlayAlert(diff);
+
+  const frac=Math.max(0,Math.min(1,diff/currentTotalMs));
+  ctx.lineWidth=Math.max(7,Math.round(Math.min(w,h)*.032));
+  ctx.lineCap='round';
+  const arcGradient=ctx.createLinearGradient(cx-r,cy-r,cx+r,cy+r);
+  arcGradient.addColorStop(0,'#9b5cff');
+  arcGradient.addColorStop(.48,'#547dff');
+  arcGradient.addColorStop(1,'#36d8ff');
+  ctx.strokeStyle=arcGradient;
+  ctx.shadowColor='rgba(111,91,255,.9)';
+  ctx.shadowBlur=Math.max(10,Math.round(Math.min(w,h)*.035));
+  ctx.beginPath();
+  ctx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+frac*Math.PI*2);
+  ctx.stroke();
+  ctx.shadowBlur=0;
+  ctx.shadowColor='transparent';
+
+  const sec=Math.max(0,Math.floor(diff/1000));
+  const mins=Math.floor(sec/60);
+  const secs=sec%60;
+  const text=String(mins).padStart(2,'0')+':'+String(secs).padStart(2,'0');
+
+  ctx.fillStyle='#fff';
+  ctx.font=`bold ${Math.round(Math.min(w,h)*.14)}px system-ui`;
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(text,cx,cy);
+
+  const labels=getTimerLabels();
+  const minDim=Math.min(w,h);
+
+  if(labels.active){
+    ctx.fillStyle='rgba(255,255,255,.95)';
+    ctx.font=`700 ${Math.max(13,Math.round(minDim*.035))}px system-ui`;
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText(labels.active,cx,cy-Math.max(58,minDim*.13));
+  }
+
+  if(labels.next){
+    ctx.fillStyle='rgba(255,255,255,.72)';
+    ctx.font=`500 ${Math.max(11,Math.round(minDim*.024))}px system-ui`;
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText(labels.next,cx,cy+Math.max(58,minDim*.13));
+  }
+}
+
+function loop(){
+  drawFrame();
+  rafId=requestAnimationFrame(loop);
+}
+
+function startTimer(){
+  target=computeNextTarget();
+  if(!target){
+    infoText.textContent='Ingen tider fundet.';
+    drawFrame();
+    return;
+  }
+  if(!rafId)loop();
+}
+
+function loadSoundSettings(){
+  try{
+    const s=JSON.parse(localStorage.getItem(SOUND_SETTINGS_KEY)||'{}');
+    soundEnabled.checked=Boolean(s.enabled);
+    soundLead.value=Number.isFinite(Number(s.lead))?Math.max(0,Math.min(3600,Number(s.lead))):90;
+    soundVolume.value=Number.isFinite(Number(s.volume))?Math.max(0,Math.min(100,Number(s.volume))):70;
+  }catch(e){
+    soundEnabled.checked=false;
+    soundLead.value=90;
+    soundVolume.value=70;
+  }
+  updateSoundUI();
+}
+
+function updateSoundUI(){
+  const lead=Math.max(0,Math.min(3600,Number(soundLead.value)||0));
+  const vol=Math.max(0,Math.min(100,Number(soundVolume.value)||0));
+  soundVolumeValue.textContent=Math.round(vol)+'%';
+  soundSummary.textContent=soundEnabled.checked?`${lead} sek før · ${Math.round(vol)} %`:'Fra';
+}
+
+function saveSoundSettings(){
+  const lead=Math.max(0,Math.min(3600,Number(soundLead.value)||0));
+  const volume=Math.max(0,Math.min(100,Number(soundVolume.value)||0));
+  soundLead.value=lead;
+  soundVolume.value=volume;
+  localStorage.setItem(SOUND_SETTINGS_KEY,JSON.stringify({enabled:soundEnabled.checked,lead,volume}));
+  updateSoundUI();
+}
+
+async function ensureAudioReady(){
+  if(!audioContext){
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC)throw new Error('Web Audio understøttes ikke');
+    audioContext=new AC();
+  }
+  if(audioContext.state==='suspended'){
+    try{await audioContext.resume()}catch(e){}
+  }
+  if(audioBuffer)return audioBuffer;
+  if(!audioLoading){
+    audioLoading=fetch('./ding.mp3')
+      .then(r=>{if(!r.ok)throw new Error('Lydfil kunne ikke hentes');return r.arrayBuffer()})
+      .then(b=>audioContext.decodeAudioData(b))
+      .then(buf=>{audioBuffer=buf;return buf})
+      .finally(()=>{audioLoading=null});
+  }
+  return audioLoading;
+}
+
+function tryUnlockAudio(){
+  if(soundEnabled.checked)ensureAudioReady().catch(()=>{});
+}
+
+async function playAlertSound(){
+  try{
+    const buf=await ensureAudioReady();
+    if(!buf||!audioContext)return;
+    const source=audioContext.createBufferSource();
+    const gain=audioContext.createGain();
+    {
+      const pct=Math.max(0,Math.min(100,Number(soundVolume.value)||0));
+      // dB-lignende fader: 100 % = 0 dB, 50 % ≈ -20 dB, 1 % ≈ -40 dB, 0 % = mute.
+      const gainValue=pct<=0?0:Math.pow(10,(-40*(1-pct/100))/20);
+      gain.gain.value=gainValue;
+    }
+    source.buffer=buf;
+    source.connect(gain);
+    gain.connect(audioContext.destination);
+    source.start(0);
+  }catch(e){console.warn('Kunne ikke afspille lyd',e)}
+}
+
+function maybePlayAlert(diffMs){
+  if(!soundEnabled.checked||!target)return;
+  const leadMs=Math.max(0,Math.min(3600,Number(soundLead.value)||0))*1000;
+  const targetKey=String(target.getTime());
+  if(diffMs<=leadMs&&diffMs>=-1000&&lastSoundTargetKey!==targetKey){
+    lastSoundTargetKey=targetKey;
+    playAlertSound();
+  }
+}
+
+function drawFloating(){
+  if(!pipWindow||pipWindow.closed||!pipCanvas||!pipCtx){
+    pipWindow=null;pipCanvas=null;pipCtx=null;pipRafId=null;return;
+  }
+  const dpr=pipWindow.devicePixelRatio||1;
+  const w=pipWindow.innerWidth,h=pipWindow.innerHeight;
+
+  if(pipCanvas.width!==Math.round(w*dpr)||pipCanvas.height!==Math.round(h*dpr)){
+    pipCanvas.width=Math.round(w*dpr);
+    pipCanvas.height=Math.round(h*dpr);
+    pipCanvas.style.width=w+'px';
+    pipCanvas.style.height=h+'px';
+    pipCtx.setTransform(dpr,0,0,dpr,0,0);
+  }
+
+  pipCtx.clearRect(0,0,w,h);
+  const cx=w/2,cy=h/2,min=Math.min(w,h);
+  const radius=Math.max(8,min/2-Math.max(15,min*.06));
+
+  pipCtx.lineWidth=Math.max(5,Math.round(min*.04));
+  pipCtx.strokeStyle='#333';
+  pipCtx.beginPath();pipCtx.arc(cx,cy,radius,0,Math.PI*2);pipCtx.stroke();
+
+  if(target){
+    let diff=target-new Date();
+    if(diff<=0){
+      target=computeNextTarget();
+      if(target)diff=target-new Date();
+    }
+    if(target){
+      maybePlayAlert(diff);
+      const frac=Math.max(0,Math.min(1,diff/currentTotalMs));
+      const start=-Math.PI/2,end=start+frac*Math.PI*2;
+      pipCtx.lineWidth=Math.max(7,Math.round(min*.06));
+      pipCtx.lineCap='round';
+      const pipGradient=pipCtx.createLinearGradient(cx-radius,cy-radius,cx+radius,cy+radius);
+      pipGradient.addColorStop(0,'#9b5cff');
+      pipGradient.addColorStop(.48,'#547dff');
+      pipGradient.addColorStop(1,'#36d8ff');
+      pipCtx.strokeStyle=pipGradient;
+      pipCtx.shadowColor='rgba(111,91,255,.9)';
+      pipCtx.shadowBlur=Math.max(8,Math.round(min*.035));
+      pipCtx.beginPath();pipCtx.arc(cx,cy,radius,start,end,false);pipCtx.stroke();
+      pipCtx.shadowBlur=0;
+      pipCtx.shadowColor='transparent';
+
+      const sec=Math.max(0,Math.floor(diff/1000));
+      const mins=Math.floor(sec/60),secs=sec%60;
+      const text=String(mins).padStart(2,'0')+':'+String(secs).padStart(2,'0');
+      pipCtx.fillStyle='#fff';
+      pipCtx.font=`bold ${Math.max(18,Math.round(min*.16))}px system-ui`;
+      pipCtx.textAlign='center';pipCtx.textBaseline='middle';
+      pipCtx.fillText(text,cx,cy);
+
+      const labels=getTimerLabels();
+      if(labels.active){
+        pipCtx.fillStyle='rgba(255,255,255,.95)';
+        pipCtx.font=`700 ${Math.max(10,Math.round(min*.052))}px system-ui`;
+        pipCtx.textAlign='center';pipCtx.textBaseline='middle';
+        pipCtx.fillText(labels.active,cx,cy-Math.max(34,min*.20));
+      }
+      if(labels.next){
+        pipCtx.fillStyle='rgba(255,255,255,.72)';
+        pipCtx.font=`500 ${Math.max(9,Math.round(min*.038))}px system-ui`;
+        pipCtx.textAlign='center';pipCtx.textBaseline='middle';
+        pipCtx.fillText(labels.next,cx,cy+Math.max(34,min*.20));
+      }
+    }
+  }else{
+    pipCtx.fillStyle='#bbb';
+    pipCtx.font=`bold ${Math.max(12,Math.round(min*.075))}px system-ui`;
+    pipCtx.textAlign='center';pipCtx.textBaseline='middle';
+    pipCtx.fillText(entries.length?'Vælg en dag':'Ingen tider',cx,cy);
+  }
+
+  pipRafId=pipWindow.requestAnimationFrame(drawFloating);
+}
+
+async function openFloatingTimer(){
+  if(!('documentPictureInPicture'in window)){
+    alert('Flydende timer understøttes ikke af denne browser. Brug Chrome eller Edge på Mac/Windows.');
+    return;
+  }
+  if(pipWindow&&!pipWindow.closed){pipWindow.focus();return}
+  try{
+    pipWindow=await documentPictureInPicture.requestWindow({width:320,height:320});
+  showPipMainMessage();
+    const d=pipWindow.document;
+    d.documentElement.style.cssText='margin:0;width:100%;height:100%;background:#000000';
+    d.body.style.cssText='margin:0;width:100%;height:100%;overflow:hidden;background:#000000';
+    pipCanvas=d.createElement('canvas');
+    pipCanvas.style.cssText='display:block;width:100vw;height:100vh';
+    d.body.appendChild(pipCanvas);
+    pipCtx=pipCanvas.getContext('2d');
+    pipWindow.addEventListener('pagehide',()=>{
+    hidePipMainMessage();pipWindow=null;pipCanvas=null;pipCtx=null;pipRafId=null});
+    drawFloating();
+    closeMenu();
+  }catch(e){
+    hidePipMainMessage();console.error(e)}
+}
+
+function getEditableEntries(sheet){
+  const rows=XLSX.utils.sheet_to_json(sheet,{header:1,raw:true,defval:null});
+  const result=[];
+  for(let r=0;r<rows.length;r++){
+    const row=rows[r]||[];
+    const t=parseTimeCell(row[2]);
+    if(t){
+      result.push({
+        rowIndex:r,
+        label:(row[0]??'').toString(),
+        h:t.h,
+        m:t.m
+      });
+    }
+  }
+  result.sort((a,b)=>(a.h-b.h)||(a.m-b.m));
+  return result;
+}
+
+function renderEditor(){
+  if(!currentWorkbook)return;
+  const sheetIndex=Number(editorSheetSelect.value)||0;
+  const sheetName=currentWorkbook.SheetNames[sheetIndex];
+  const sheet=currentWorkbook.Sheets[sheetName];
+  const items=getEditableEntries(sheet);
+
+  editorRows.innerHTML='';
+  editorEmpty.style.display=items.length?'none':'block';
+
+  items.forEach(item=>{
+    const tr=document.createElement('tr');
+
+    const nameTd=document.createElement('td');
+    const nameInput=document.createElement('input');
+    nameInput.type='text';
+    nameInput.value=item.label;
+    nameInput.addEventListener('change',async()=>{
+      const cell='A'+(item.rowIndex+1);
+      sheet[cell]={t:'s',v:nameInput.value};
+      ensureSheetRange(sheet,item.rowIndex,2);
+      await workbookChanged();
+    });
+    nameTd.appendChild(nameInput);
+
+    const timeTd=document.createElement('td');
+    timeTd.className='timeCell';
+    const timeInput=document.createElement('input');
+    timeInput.type='time';
+    timeInput.value=timeToHHMM(item);
+    timeInput.addEventListener('change',async()=>{
+      const t=parseTimeCell(timeInput.value);
+      if(!t)return;
+      setTimeCell(sheet,item.rowIndex,t.h,t.m);
+      sortSheetTimes(sheet);
+      await workbookChanged();
+      renderEditor();
+    });
+    timeTd.appendChild(timeInput);
+
+    const removeTd=document.createElement('td');
+    removeTd.className='removeCell';
+    const remove=document.createElement('button');
+    remove.type='button';
+    remove.className='removeBtn';
+    remove.textContent='Fjern';
+    remove.addEventListener('click',async()=>{
+      delete sheet['A'+(item.rowIndex+1)];
+      delete sheet['C'+(item.rowIndex+1)];
+      await workbookChanged();
+      renderEditor();
+    });
+    removeTd.appendChild(remove);
+
+    tr.append(timeTd,nameTd,removeTd);
+    editorRows.appendChild(tr);
+  });
+}
+
+function ensureSheetRange(sheet,rowIndex,colIndex){
+  const cellRef=XLSX.utils.encode_cell({r:rowIndex,c:colIndex});
+  let range;
+  if(sheet['!ref'])range=XLSX.utils.decode_range(sheet['!ref']);
+  else range={s:{r:rowIndex,c:0},e:{r:rowIndex,c:colIndex}};
+  range.s.r=Math.min(range.s.r,rowIndex);
+  range.s.c=Math.min(range.s.c,0);
+  range.e.r=Math.max(range.e.r,rowIndex);
+  range.e.c=Math.max(range.e.c,colIndex);
+  sheet['!ref']=XLSX.utils.encode_range(range);
+  return cellRef;
+}
+
+function setTimeCell(sheet,rowIndex,h,m){
+  const ref=ensureSheetRange(sheet,rowIndex,2);
+  sheet[ref]={t:'n',v:timeToExcelFraction(h,m),z:'hh:mm'};
+}
+
+function findNextAppendRow(sheet){
+  if(!sheet['!ref'])return 0;
+  const range=XLSX.utils.decode_range(sheet['!ref']);
+  return range.e.r+1;
+}
+
+function sortSheetTimes(sheet){
+  const items=getEditableEntries(sheet);
+  if(items.length<2)return;
+
+  const rowSlots=items.map(x=>x.rowIndex).sort((a,b)=>a-b);
+  const sorted=items.slice().sort((a,b)=>(a.h-b.h)||(a.m-b.m));
+
+  for(let i=0;i<rowSlots.length;i++){
+    const row=rowSlots[i];
+    const item=sorted[i];
+    sheet['A'+(row+1)]={t:'s',v:item.label};
+    setTimeCell(sheet,row,item.h,item.m);
+  }
+}
+
+async function workbookChanged(){
+  dirty=true;
+  updateDocumentUI();
+  await persistCurrentWorkbook();
+
+  const mainIndex=sheetSelect.value==='calendar'
+    ? Math.max(0,getTodaySheetIndex(currentWorkbook))
+    : (Number(sheetSelect.value)||0);
+  const editorIndex=Number(editorSheetSelect.value)||0;
+  if(mainIndex===editorIndex){
+    const sheetName=currentWorkbook.SheetNames[mainIndex];
+    loadSheet(currentWorkbook.Sheets[sheetName],true);
+  }
+}
+
+function syncEditorSheetList(selectedIndex){
+  editorSheetSelect.innerHTML='';
+  currentWorkbook.SheetNames.forEach((name,i)=>{
+    const o=document.createElement('option');
+    o.value=String(i);
+    o.textContent=name;
+    editorSheetSelect.appendChild(o);
+  });
+  editorSheetSelect.value=String(Math.max(0,Math.min(selectedIndex,currentWorkbook.SheetNames.length-1)));
+}
+
+function addNewTime(){
+  const sheetIndex=Number(editorSheetSelect.value)||0;
+  const sheetName=currentWorkbook.SheetNames[sheetIndex];
+  const sheet=currentWorkbook.Sheets[sheetName];
+  const t=parseTimeCell(newTimeValue.value);
+  if(!t){
+    newTimeValue.focus();
+    return;
+  }
+
+  const row=findNextAppendRow(sheet);
+  sheet['A'+(row+1)]={t:'s',v:newTimeLabel.value.trim()||'Nyt tidspunkt'};
+  setTimeCell(sheet,row,t.h,t.m);
+  sortSheetTimes(sheet);
+
+  newTimeBox.style.display='none';
+  newTimeLabel.value='';
+  workbookChanged().then(renderEditor);
+}
+
+function addNewSheet(){
+  let name=newSheetName.value.trim()||'Ny dag';
+  const base=name;
+  let n=2;
+  while(currentWorkbook.SheetNames.includes(name))name=`${base} ${n++}`;
+
+  const sheet=XLSX.utils.aoa_to_sheet([]);
+  XLSX.utils.book_append_sheet(currentWorkbook,sheet,name);
+  const newIndex=currentWorkbook.SheetNames.indexOf(name);
+
+  populateWorkbook(currentWorkbook,Number(sheetSelect.value)||0,true);
+  syncEditorSheetList(newIndex);
+  newSheetBox.style.display='none';
+  newSheetName.value='Ny dag';
+  dirty=true;
+  updateDocumentUI();
+  persistCurrentWorkbook().then(renderEditor);
+}
+
+
+function createDefaultWeekWorkbook(){
+  const wb=XLSX.utils.book_new();
+  ['Mandag','Tirsdag','Onsdag','Torsdag','Fredag'].forEach(day=>{
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([]),day);
+  });
+  currentWorkbook=wb;
+  currentFileName='Skemaur.xlsx';
+  dirty=true;
+  populateWorkbook(wb,0,false,true);
+  updateDocumentUI();
+  persistCurrentWorkbook();
+  return wb;
+}
+
+function openEditor(){
+  if(!currentWorkbook){
+    createDefaultWeekWorkbook();
+  }
+  if(!currentWorkbook)return;
+
+  const selected=sheetSelect.value==='calendar'
+      ? Math.max(0,getTodaySheetIndex(currentWorkbook))
+      : Math.max(0,Number(sheetSelect.value)||0);
+  syncEditorSheetList(selected);
+  editorSheetSelect.value=String(selected);
+  renderEditor();
+  editorOverlay.style.display='flex';
+  closeMenu();
+}
+
+function closeEditor(){
+  editorOverlay.style.display='none';
+  newTimeBox.style.display='none';
+  newSheetBox.style.display='none';
+  const selected=Number(editorSheetSelect.value)||0;
+  if(currentWorkbook?.SheetNames[selected]){
+    if(!followCalendarMode){
+      sheetSelect.value=String(selected);
+      sheetSelect.dataset.mode='manual';
+    }
+    loadSheet(currentWorkbook.Sheets[currentWorkbook.SheetNames[selected]],true);
+  }
+}
+
+function safeDownloadName(){
+  let name=currentFileName||'tidsplan.xlsx';
+  if(!/\.(xlsx|xlsm|xlsb|xls)$/i.test(name))name+='.xlsx';
+  return name;
+}
+
+async function saveExcelFile(){
+  if(!currentWorkbook)return false;
+  try{
+    normalizeWorkbookTimeFormats(currentWorkbook);
+    XLSX.writeFile(currentWorkbook,safeDownloadName(),{compression:true});
+    dirty=false;
+    updateDocumentUI();
+    await persistCurrentWorkbook();
+    return true;
+  }catch(e){
+    console.error(e);
+    alert('Kunne ikke gemme Excel-filen.');
+    return false;
+  }
+}
+
+function requestOpenFile(){
+  if(dirty){
+    pendingOpenAfterWarning=true;
+    unsavedOverlay.style.display='flex';
+    closeMenu();
+  }else{
+    fileInput.value='';
+    fileInput.click();
+  }
+}
+
+function closeUnsaved(){
+  unsavedOverlay.style.display='none';
+  pendingOpenAfterWarning=false;
+}
+
+function collapseSubmenus(){
+  docMenu.style.display='none';
+  soundPanel.style.display='none';
+  documentButton.setAttribute('aria-expanded','false');
+  soundButton.setAttribute('aria-expanded','false');
+}
+
+function closeMenu(){
+  menu.style.display='none';
+  menuButton.setAttribute('aria-expanded','false');
+  collapseSubmenus();
+}
+
+function toggleMenu(){
+  const open=menu.style.display==='block';
+  if(open){
+    closeMenu();
+  }else{
+    menu.style.display='block';
+    menuButton.setAttribute('aria-expanded','true');
+    tryUnlockAudio();
+  }
+}
+
+function toggleDocumentMenu(){
+  const show=docMenu.style.display!=='block';
+  docMenu.style.display=show?'block':'none';
+  documentButton.setAttribute('aria-expanded',String(show));
+}
+
+function toggleSoundPanel(){
+  const show=soundPanel.style.display!=='block';
+  soundPanel.style.display=show?'block':'none';
+  soundButton.setAttribute('aria-expanded',String(show));
+}
+
+sheetSelect.addEventListener('change',()=>{
+  if(!currentWorkbook)return;
+
+  if(sheetSelect.value==='calendar'){
+    followCalendarMode=true;
+    sheetSelect.dataset.mode='calendar';
+    applyCalendarDay(true);
+    lastSoundTargetKey=null;
+    closeMenu();
+    return;
+  }
+
+  followCalendarMode=false;
+  sheetSelect.dataset.mode='manual';
+  const idx=Math.max(0,Number(sheetSelect.value)||0);
+  const sheetName=currentWorkbook.SheetNames[idx];
+  if(!sheetName)return;
+  editorSheetSelect.value=String(idx);
+  loadSheet(currentWorkbook.Sheets[sheetName],true);
+  lastSoundTargetKey=null;
+  closeMenu();
+});
+
+menuButton.addEventListener('click',toggleMenu);
+
+document.addEventListener('pointerdown',e=>{
+  if(menu.style.display!=='block')return;
+  if(menu.contains(e.target)||menuButton.contains(e.target))return;
+  closeMenu();
+});
+documentButton.addEventListener('click',toggleDocumentMenu);
+soundButton.addEventListener('click',toggleSoundPanel);
+editButton.addEventListener('click',openEditor);
+openButton.addEventListener('click',requestOpenFile);
+saveButton.addEventListener('click',saveExcelFile);
+floatingButton.addEventListener('click',openFloatingTimer);
+
+soundEnabled.addEventListener('change',()=>{
+  saveSoundSettings();
+  tryUnlockAudio();
+});
+soundLead.addEventListener('change',saveSoundSettings);
+soundVolume.addEventListener('input',saveSoundSettings);
+testSoundButton.addEventListener('click',async()=>{
+  saveSoundSettings();
+  await playAlertSound();
+});
+
+editorSheetSelect.addEventListener('change',()=>{ renderEditor(); });
+closeEditorButton.addEventListener('click',closeEditor);
+doneEditorButton.addEventListener('click',closeEditor);
+
+addTimeButton.addEventListener('click',()=>{
+  newSheetBox.style.display='none';
+  newTimeLabel.value='';
+  newTimeBox.style.display='block';
+  requestAnimationFrame(()=>newTimeLabel.focus());
+});
+cancelNewTimeButton.addEventListener('click',()=>newTimeBox.style.display='none');
+confirmNewTimeButton.addEventListener('click',addNewTime);
+
+addSheetButton.addEventListener('click',()=>{
+  newTimeBox.style.display='none';
+  newSheetBox.style.display='block';
+  newSheetName.focus();
+});
+cancelNewSheetButton.addEventListener('click',()=>newSheetBox.style.display='none');
+confirmNewSheetButton.addEventListener('click',addNewSheet);
+
+unsavedSaveButton.addEventListener('click',async()=>{
+  const ok=await saveExcelFile();
+  if(ok&&pendingOpenAfterWarning){
+    unsavedOverlay.style.display='none';
+    pendingOpenAfterWarning=false;
+    fileInput.value='';
+    fileInput.click();
+  }
+});
+
+unsavedContinueButton.addEventListener('click',()=>{
+  unsavedOverlay.style.display='none';
+  pendingOpenAfterWarning=false;
+  fileInput.value='';
+  fileInput.click();
+});
+
+unsavedCancelButton.addEventListener('click',closeUnsaved);
+
+fileInput.addEventListener('change',e=>{
+  const f=e.target.files?.[0];
+  if(!f)return;
+  const r=new FileReader();
+  r.onload=async ev=>{
+    const buffer=ev.target.result;
+    try{
+      currentFileName=f.name||'tidsplan.xlsx';
+      dirty=false;
+      const wb=XLSX.read(new Uint8Array(buffer),{type:'array',cellDates:true});
+      populateWorkbook(wb,0,true,true);
+      await persistCurrentWorkbook();
+      infoText.textContent=`${currentFileName} — ${currentWorkbook.SheetNames.length} dage`;
+      closeMenu();
+    }catch(err){
+      console.error(err);
+      infoText.textContent='Kunne ikke åbne Excel-filen';
+    }
+  };
+  r.readAsArrayBuffer(f);
+});
+
+if('documentPictureInPicture'in window)floatingButton.style.display='flex';
+
+
+
+(function markIphoneAppMode(){
+  const isIphone=/iPhone/i.test(navigator.userAgent);
+  const isStandalone=window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true;
+  document.documentElement.classList.toggle('iphoneAppMode', isIphone && isStandalone);
+})();
+
+let deferredInstallPrompt=null;
+
+function isIosDevice(){
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+}
+function isStandaloneMode(){
+  return window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    window.navigator.standalone===true;
+}
+function isIosSafari(){
+  const ua=navigator.userAgent;
+  return isIosDevice() && /WebKit/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
+}
+function updateInstallButton(){
+  if(isStandaloneMode()){
+    installButton.style.display='none';
+  }else if(deferredInstallPrompt || isIosSafari()){
+    installButton.style.display='block';
+  }else{
+    installButton.style.display='none';
+  }
+}
+
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();
+  deferredInstallPrompt=e;
+  updateInstallButton();
+});
+
+window.addEventListener('appinstalled',()=>{
+  deferredInstallPrompt=null;
+  updateInstallButton();
+});
+
+installButton.addEventListener('click',async()=>{
+  if(isStandaloneMode()){
+    installButton.style.display='none';
+    return;
+  }
+  if(deferredInstallPrompt){
+    const promptEvent=deferredInstallPrompt;
+    deferredInstallPrompt=null;
+    try{
+      await promptEvent.prompt();
+      await promptEvent.userChoice;
+    }catch(e){
+      console.warn('Installationsdialog kunne ikke åbnes',e);
+    }
+    updateInstallButton();
+    return;
+  }
+  if(isIosSafari() && iosInstallOverlay){
+    iosInstallOverlay.style.display='flex';
+    closeMenu();
+  }
+});
+
+if(closeIosInstallButton)closeIosInstallButton.addEventListener('click',()=>{ if(iosInstallOverlay)iosInstallOverlay.style.display='none'; });
+if(iosInstallOverlay)iosInstallOverlay.addEventListener('pointerdown',e=>{
+  if(e.target===iosInstallOverlay)iosInstallOverlay.style.display='none';
+});
+
+const standaloneQuery=window.matchMedia('(display-mode: standalone)');
+if(standaloneQuery.addEventListener)standaloneQuery.addEventListener('change',updateInstallButton);
+updateInstallButton();
+
+loadSoundSettings();
+restoreWorkbook().then(()=>{
+  updateDocumentUI();
+  if(currentWorkbook&&currentWorkbook.SheetNames.length){
+    startTimer();
+  }else{
+    drawFrame();
+  }
+});
+
+if('serviceWorker'in navigator){
+  addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{scope:'./'}).catch(()=>{}));
+}
+
+if('serviceWorker' in navigator){
+  let refreshing=false;
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(refreshing)return;
+    refreshing=true;
+    location.reload();
+  });
+}
+
